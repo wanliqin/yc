@@ -1,0 +1,15 @@
+*.DS_Store
+/*
+!.gitignore
+!yc/
+!yc/**
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.log
+*.tmp
+*.cache
+*.bak
+.DS_Store
+.vscode/
