@@ -4,6 +4,11 @@ import pandas as pd
 import tushare as ts
 import os
 import numpy as np
+import sys
+
+# 添加父目录到path以导入config
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+import config
 
 class DataLoader:
     def __init__(self, db_path=None, token=None):
@@ -17,7 +22,7 @@ class DataLoader:
             db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache.db")
         
         if token is None:
-            token = "bd5193e8e1f07ef9b7bbdc8bf7efdc9ac054932082ae52c9804c01e0"
+            token = config.TUSHARE_TOKEN
         
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)

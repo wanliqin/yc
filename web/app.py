@@ -1,3 +1,5 @@
+from typing import Optional
+
 import datetime as dt
 from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.responses import HTMLResponse
@@ -13,11 +15,16 @@ import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.data_loader import DataLoader
+import config
 from features.feature_engineer import FeatureEngineer
-from models.stock_predictor import StockPredictor
+from utils.cached_predictor import CachedStockPredictor  # 使用缓存版本
 from database.prediction_manager import PredictionManager
+from utils.cache_web_interface import cache_router  # 导入缓存管理路由
 
 app = FastAPI(title="股票智能预测系统", description="基于机器学习的股票涨跌预测")
+
+# 包含缓存管理路由
+app.include_router(cache_router)
 
 # 初始化组件
 data_loader = DataLoader()
@@ -45,7 +52,7 @@ def init_stock_search_db():
     if count == 0:
         try:
             import tushare as ts
-            ts.set_token("bd5193e8e1f07ef9b7bbdc8bf7efdc9ac054932082ae52c9804c01e0")
+            ts.set_token(config.TUSHARE_TOKEN)
             pro = ts.pro_api()
             
             # 获取所有股票（包括ETF）
@@ -1222,8 +1229,9 @@ def predict(code: str = Form(...), win: str = Form("120,250"), trials: int = For
             return {"error": f"窗口期设置过大，可用数据{len(features_df)}条，建议窗口期不超过{max_suggested}"}
         
         # 训练模型
-        predictor = StockPredictor(feature_cols)
-        model, best_params, val_acc = predictor.train_model(
+        predictor = CachedStockPredictor(feature_cols)
+        model, best_params, val_acc = predictor.train_model_with_cache(
+            code,
             X,
             y,
             window_size=min(valid_windows),
@@ -1410,9 +1418,10 @@ def predict(code: str = Form(...), win: str = Form("120,250"), trials: int = For
         return {"error": str(e)}
 
 @app.get("/history")
-def get_history(code: str = None):
+def get_history(code: Optional[str] = None):
     """获取历史预测记录"""
     try:
+        # 使用现有的 get_history 方法，支持 None 参数
         history = prediction_manager.get_history(code)
         
         # 格式化历史记录数据

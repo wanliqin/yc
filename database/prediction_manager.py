@@ -305,7 +305,7 @@ class PredictionManager:
             "actual_accuracy": 0
         }
 
-    def get_history(self, code: str = None, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_history(self, code: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
         """获取历史预测记录
         
         Args:

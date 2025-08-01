@@ -7,6 +7,12 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from typing import List, Dict, Any, Tuple
 import warnings
+import sys
+import os
+
+# 添加utils路径
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from utils.weight_calculator import DynamicWeightCalculator
 
 # 抑制警告
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -17,6 +23,57 @@ class StockPredictor:
     
     def __init__(self, feature_columns: List[str]):
         self.feature_columns = feature_columns
+        self.weight_calculator = DynamicWeightCalculator()
+        
+    def calculate_sample_weights(self, data: pd.DataFrame, method: str = 'dynamic') -> np.ndarray:
+        """计算样本权重
+        
+        Args:
+            data: 包含价格和成交量数据的DataFrame
+            method: 权重计算方法 ('simple', 'dynamic', 'adaptive')
+            
+        Returns:
+            样本权重数组
+        """
+        n_samples = len(data)
+        
+        if method == 'simple':
+            # 原有的简单权重策略
+            weights = np.ones(n_samples)
+            if n_samples >= 30:
+                weights[-30:] = 3
+            return weights
+            
+        elif method == 'dynamic':
+            # 新的动态权重策略
+            return self.weight_calculator.calculate_combined_weights(data)
+            
+        elif method == 'adaptive':
+            # 自适应权重策略 - 根据数据特征选择市场状态
+            if len(data) < 50:
+                return self.weight_calculator.calculate_combined_weights(data)
+            
+            # 简单的市场状态检测
+            recent_data = data.tail(30)
+            if 'close' in data.columns:
+                recent_returns = recent_data['close'].pct_change().dropna()
+                volatility = recent_returns.std()
+                
+                if volatility > 0.03:  # 高波动
+                    market_state = 'volatile'
+                elif recent_returns.mean() > 0.01:  # 持续上涨
+                    market_state = 'bull'
+                elif recent_returns.mean() < -0.01:  # 持续下跌
+                    market_state = 'bear'
+                else:
+                    market_state = 'normal'
+            else:
+                market_state = 'normal'
+                
+            return self.weight_calculator.get_adaptive_weights(data, market_state)
+        
+        else:
+            return np.ones(n_samples)
         
     def weighted_accuracy(self, y_true: np.ndarray, y_pred: np.ndarray, weights: np.ndarray) -> float:
         """加权准确率计算
@@ -100,8 +157,15 @@ class StockPredictor:
         # 滚动窗口验证
         predictions = []
         for i in range(window_size, len(X) - 1):
-            sample_weight = np.ones(window_size)
-            sample_weight[-30:] = 3  # 最近30天权重×3
+            # 获取训练数据窗口
+            train_data = X.iloc[i-window_size:i].copy()
+            if 'close' not in train_data.columns and 'close' in X.columns:
+                train_data['close'] = X['close'].iloc[i-window_size:i]
+            if 'vol' not in train_data.columns and 'vol' in X.columns:
+                train_data['vol'] = X['vol'].iloc[i-window_size:i]
+            
+            # 计算动态权重
+            sample_weight = self.calculate_sample_weights(train_data, method='dynamic')
             
             try:
                 model.fit(
@@ -225,11 +289,16 @@ class StockPredictor:
             if len(np.unique(y_train)) < 2:
                 return None, {}, 0.5
             
-            sample_weight = np.ones(len(X_train))
-            if len(X_train) >= 30:
-                sample_weight[-30:] = 3
-            else:
-                sample_weight[:] = 1
+            # 准备权重计算的数据
+            train_data = X_train.copy()
+            # 如果原始数据包含价格和成交量信息，添加到训练数据中
+            if 'close' in X.columns:
+                train_data['close'] = X['close'].iloc[-len(X_train)-1:-1]
+            if 'vol' in X.columns:
+                train_data['vol'] = X['vol'].iloc[-len(X_train)-1:-1]
+                
+            # 使用动态权重计算
+            sample_weight = self.calculate_sample_weights(train_data, method='adaptive')
                 
             try:
                 model.fit(X_train, y_train, sample_weight=sample_weight)

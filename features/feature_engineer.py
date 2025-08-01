@@ -1,13 +1,20 @@
 import pandas as pd
-import ta
 import numpy as np
+from ta import momentum, trend, volatility, volume
 
 class FeatureEngineer:
     """特征工程类，用于生成技术指标和标签"""
     
     def __init__(self):
         self.feature_columns = [
-            "rsi", "k", "d", "j", "bbp", "macd", "macd_signal", "ret"
+            # 原有特征
+            "rsi", "k", "d", "j", "bbp", "macd", "macd_signal", "ret",
+            # 新增量价特征
+            "vol_ma", "vol_ratio", "amount_ratio", "price_volume_trend",
+            # 新增趋势特征
+            "ema", "williams_r", "momentum", "dpo", "trix",
+            # 新增波动率特征
+            "atr", "bb_width", "keltner_channel", "historical_volatility"
         ]
     
     def add_technical_indicators(self, df):
@@ -46,7 +53,8 @@ class FeatureEngineer:
         
         # RSI 相对强弱指标
         try:
-            df["rsi"] = ta.momentum.rsi(df["close"], window=14)
+            rsi_indicator = momentum.RSIIndicator(close=df["close"], window=14)
+            df["rsi"] = rsi_indicator.rsi()
         except:
             df["rsi"] = 50  # 默认值
         
@@ -66,7 +74,7 @@ class FeatureEngineer:
         
         # 布林带百分比
         try:
-            bb = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
+            bb = volatility.BollingerBands(close=df["close"], window=20, window_dev=2)
             df["bbp"] = (df["close"] - bb.bollinger_lband()) / (bb.bollinger_hband() - bb.bollinger_lband())
             df["bbp"] = df["bbp"].replace([np.inf, -np.inf], np.nan).fillna(0.5)
         except:
@@ -74,18 +82,92 @@ class FeatureEngineer:
         
         # MACD 指标
         try:
-            macd = ta.trend.MACD(df["close"])
+            macd = trend.MACD(close=df["close"])
             df["macd"] = macd.macd()
             df["macd_signal"] = macd.macd_signal()
         except:
             df["macd"] = 0
             df["macd_signal"] = 0
         
+        # === 新增量价特征 ===
+        try:
+            # 成交量移动平均
+            df["vol_ma"] = df["vol"].rolling(window=20).mean()
+            df["vol_ratio"] = df["vol"] / df["vol_ma"]
+            
+            # 成交额占比（需要计算成交额）
+            df["amount"] = df["close"] * df["vol"]
+            df["amount_ma"] = df["amount"].rolling(window=20).mean()
+            df["amount_ratio"] = df["amount"] / df["amount_ma"]
+            
+            # 价量趋势指标 (PVT)
+            df["price_volume_trend"] = ((df["close"] - df["close"].shift(1)) / df["close"].shift(1) * df["vol"]).cumsum()
+        except:
+            df["vol_ma"] = df["vol"].mean()
+            df["vol_ratio"] = 1.0
+            df["amount_ratio"] = 1.0
+            df["price_volume_trend"] = 0
+        
+        # === 新增趋势特征 ===
+        try:
+            # EMA指数移动平均
+            ema_indicator = trend.EMAIndicator(close=df["close"], window=12)
+            df["ema"] = ema_indicator.ema_indicator()
+            
+            # 威廉指标
+            williams_indicator = momentum.WilliamsRIndicator(high=df["high"], low=df["low"], close=df["close"], lbp=14)
+            df["williams_r"] = williams_indicator.williams_r()
+            
+            # 动量指标 (ROC)
+            roc_indicator = momentum.ROCIndicator(close=df["close"], window=10)
+            df["momentum"] = roc_indicator.roc()
+            
+            # 去趋势价格震荡指标 (DPO)
+            dpo_indicator = trend.DPOIndicator(close=df["close"], window=20)
+            df["dpo"] = dpo_indicator.dpo()
+            
+            # TRIX指标
+            trix_indicator = trend.TRIXIndicator(close=df["close"], window=14)
+            df["trix"] = trix_indicator.trix()
+        except:
+            df["ema"] = df["close"]
+            df["williams_r"] = -50
+            df["momentum"] = 0
+            df["dpo"] = 0
+            df["trix"] = 0
+        
+        # === 新增波动率特征 ===
+        try:
+            # ATR真实波动范围
+            atr_indicator = volatility.AverageTrueRange(high=df["high"], low=df["low"], close=df["close"], window=14)
+            df["atr"] = atr_indicator.average_true_range()
+            
+            # 布林带宽度
+            bb = volatility.BollingerBands(close=df["close"], window=20, window_dev=2)
+            df["bb_width"] = (bb.bollinger_hband() - bb.bollinger_lband()) / bb.bollinger_mavg()
+            
+            # Keltner通道
+            keltner = volatility.KeltnerChannel(high=df["high"], low=df["low"], close=df["close"], window=20)
+            df["keltner_channel"] = (df["close"] - keltner.keltner_channel_lband()) / (keltner.keltner_channel_hband() - keltner.keltner_channel_lband())
+            
+            # 历史波动率
+            df["historical_volatility"] = df["ret"].rolling(window=20).std() * np.sqrt(252)
+        except:
+            df["atr"] = (df["high"] - df["low"]).mean()
+            df["bb_width"] = 0.1
+            df["keltner_channel"] = 0.5
+            df["historical_volatility"] = 0.2
+        
         # 标签：次日是否上涨
         df["label"] = (df["close"].shift(-1) > df["close"]).astype(int)
         
         # 确保所有特征都是数值类型
-        feature_cols = ["rsi", "k", "d", "j", "bbp", "macd", "macd_signal", "ret"]
+        feature_cols = [
+            "rsi", "k", "d", "j", "bbp", "macd", "macd_signal", "ret",
+            "vol_ma", "vol_ratio", "amount_ratio", "price_volume_trend",
+            "ema", "williams_r", "momentum", "dpo", "trix",
+            "atr", "bb_width", "keltner_channel", "historical_volatility"
+        ]
         for col in feature_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
